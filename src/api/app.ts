@@ -7,7 +7,7 @@ import type { AppConfig } from "../config/env.js";
 import { hasLinkedInSession } from "../config/env.js";
 import { AppError } from "../domain/errors.js";
 import type { ExtractionService } from "../linkedin/extraction-service.js";
-import type { LinkedInTransport } from "../linkedin/voyager-client.js";
+import type { LinkedInTransport } from "../linkedin/rsc-client.js";
 import { errorSchema, extractionBodySchema, extractionResponseSchema } from "./schemas.js";
 
 interface ExtractionBody {

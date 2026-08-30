@@ -10,10 +10,6 @@ const envSchema = z.object({
   LINKEDIN_LI_AT: optionalSecret,
   LINKEDIN_JSESSION_ID: optionalSecret,
   LINKEDIN_USER_AGENT: z.string().min(1).default("Mozilla/5.0"),
-  LINKEDIN_PROFILE_QUERY_ID: z.string().min(1).default(
-    "voyagerIdentityDashProfiles.b5c27c04968c409fc0ed3546575b9b7a",
-  ),
-  LINKEDIN_PROFILE_VARIABLE_NAME: z.enum(["vanityName", "publicIdentifier"]).default("vanityName"),
   LINKEDIN_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(15_000),
   LINKEDIN_MAX_RETRIES: z.coerce.number().int().min(0).max(2).default(1),
   CACHE_TTL_SECONDS: z.coerce.number().int().min(1).default(86_400),

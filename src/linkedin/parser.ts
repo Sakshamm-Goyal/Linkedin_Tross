@@ -17,6 +17,88 @@ function isObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function decodeHtml(value: string): string {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
+function parseJson(value: string): unknown | undefined {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function parseAttributes(tag: string): Record<string, string> {
+  const attributes: Record<string, string> = {};
+  const pattern = /([:\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+  for (const match of tag.matchAll(pattern)) {
+    const name = match[1]?.toLowerCase();
+    const value = match[2] ?? match[3];
+    if (name && value !== undefined) attributes[name] = decodeHtml(value);
+  }
+  return attributes;
+}
+
+function documentsFromText(text: string): unknown[] {
+  const output: unknown[] = [];
+  const trimmed = text.trim();
+  const direct = parseJson(trimmed);
+  if (direct !== undefined) output.push(direct);
+
+  for (const match of text.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)) {
+    const content = decodeHtml(match[1] ?? "").trim();
+    const parsed = parseJson(content);
+    if (parsed !== undefined) output.push(parsed);
+
+    for (const push of content.matchAll(/(?:self\.)?__next_f\.push\((\[[\s\S]*?\])\)\s*;?/g)) {
+      const flight = parseJson(push[1] ?? "");
+      if (flight === undefined) continue;
+      output.push(flight);
+      if (Array.isArray(flight) && typeof flight[1] === "string") {
+        for (const line of flight[1].split("\n")) {
+          const separator = line.indexOf(":");
+          const candidate = separator >= 0 ? line.slice(separator + 1).trim() : line.trim();
+          if (!candidate.startsWith("{") && !candidate.startsWith("[")) continue;
+          const decoded = parseJson(candidate);
+          if (decoded !== undefined) output.push(decoded);
+        }
+      }
+    }
+  }
+
+  const metadata: JsonObject = { $type: "linkedin.rsc.profileMetadata" };
+  for (const tag of text.match(/<meta\b[^>]*>/gi) ?? []) {
+    const attributes = parseAttributes(tag);
+    const key = (attributes.property ?? attributes.name)?.toLowerCase();
+    const content = attributes.content;
+    if (!key || !content) continue;
+    if (key === "og:title") metadata.fullName = content.replace(/\s*\|\s*LinkedIn\s*$/i, "").trim();
+    if (key === "og:description" || key === "description") metadata.summary = content;
+    if (key === "og:image") metadata.profilePictureUrl = content;
+  }
+  if (Object.keys(metadata).length > 1) output.push(metadata);
+  return output;
+}
+
+function decodeRscEnvelope(payload: unknown): unknown[] {
+  if (typeof payload === "string") return documentsFromText(payload);
+  if (!isObject(payload)) return [payload];
+  const documents = Array.isArray(payload.documents) ? payload.documents : [];
+  if (documents.length === 0) return [payload];
+  const decoded: unknown[] = [payload];
+  for (const document of documents) {
+    if (!isObject(document) || typeof document.body !== "string") continue;
+    decoded.push(...documentsFromText(document.body));
+  }
+  return decoded;
+}
+
 function collectObjects(value: unknown, output: JsonObject[] = [], seen = new Set<object>()): JsonObject[] {
   if (Array.isArray(value)) {
     for (const item of value) collectObjects(item, output, seen);
@@ -54,7 +136,7 @@ function field(object: JsonObject | undefined, ...keys: string[]): string | null
 }
 
 function typeName(object: JsonObject): string {
-  return String(object.$type ?? object.entityType ?? object.type ?? "").toLowerCase();
+  return String(object.$type ?? object["@type"] ?? object.entityType ?? object.type ?? "").toLowerCase();
 }
 
 function numberOrNull(value: unknown): number | null {
@@ -115,11 +197,13 @@ function findProfile(objects: JsonObject[], publicIdentifier: string): JsonObjec
   return objects.find((object) => {
     const type = typeName(object);
     const identifier = field(object, "publicIdentifier", "vanityName");
-    return type.endsWith("profile") && identifier?.toLowerCase() === publicIdentifier.toLowerCase();
+    return (type.endsWith("profile") || type.includes("profilemetadata") || type.endsWith("person"))
+      && identifier?.toLowerCase() === publicIdentifier.toLowerCase();
   }) ?? objects.find((object) => {
     const type = typeName(object);
-    return type.endsWith("profile") && Boolean(field(object, "firstName") || field(object, "headline"));
-  }) ?? objects.find((object) => Boolean(field(object, "firstName") && field(object, "headline")));
+    return (type.endsWith("profile") || type.includes("profilemetadata") || type.endsWith("person"))
+      && Boolean(field(object, "firstName", "givenName", "fullName", "name") || field(object, "headline", "jobTitle"));
+  }) ?? objects.find((object) => Boolean(field(object, "firstName", "givenName") && field(object, "headline", "jobTitle")));
 }
 
 function parseExperience(objects: JsonObject[]): Experience[] {
@@ -179,8 +263,8 @@ export interface ParsedProfile {
   unavailableSections: string[];
 }
 
-export function parseVoyagerProfile(payload: unknown, publicIdentifier: string): ParsedProfile {
-  const objects = collectObjects(payload);
+export function parseRscProfile(payload: unknown, publicIdentifier: string): ParsedProfile {
+  const objects = decodeRscEnvelope(payload).flatMap((document) => collectObjects(document));
   const profileEntity = findProfile(objects, publicIdentifier);
   if (!profileEntity) {
     throw new AppError(
@@ -191,8 +275,8 @@ export function parseVoyagerProfile(payload: unknown, publicIdentifier: string):
     );
   }
 
-  const first = field(profileEntity, "firstName");
-  const last = field(profileEntity, "lastName");
+  const first = field(profileEntity, "firstName", "givenName");
+  const last = field(profileEntity, "lastName", "familyName");
   const composedName = [first, last].filter(Boolean).join(" ") || null;
   const full = field(profileEntity, "fullName", "name") ?? composedName;
   const experience = parseExperience(objects);
@@ -208,9 +292,9 @@ export function parseVoyagerProfile(payload: unknown, publicIdentifier: string):
     public_identifier: field(profileEntity, "publicIdentifier", "vanityName") ?? publicIdentifier,
     linkedin_id: field(profileEntity, "entityUrn", "profileId", "memberId", "id"),
     name: { first, last, full },
-    headline: field(profileEntity, "headline", "occupation"),
-    location: field(profileEntity, "geoLocationName", "locationName", "location"),
-    about: field(profileEntity, "summary", "about"),
+    headline: field(profileEntity, "headline", "occupation", "jobTitle"),
+    location: field(profileEntity, "geoLocationName", "locationName", "location", "address"),
+    about: field(profileEntity, "summary", "about", "description"),
     profile_images: { avatar_url: avatar, background_url: background },
     experience,
     education,

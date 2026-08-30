@@ -6,7 +6,7 @@
   },
   "included": [
     {
-      "$type": "com.linkedin.voyager.dash.identity.profile.Profile",
+      "$type": "com.linkedin.sdui.identity.profile.Profile",
       "entityUrn": "urn:li:fsd_profile:abc123",
       "publicIdentifier": "jane-doe",
       "firstName": "Jane",
@@ -27,7 +27,7 @@
       }
     },
     {
-      "$type": "com.linkedin.voyager.dash.identity.profile.Position",
+      "$type": "com.linkedin.sdui.identity.profile.Position",
       "title": "Staff Software Engineer",
       "companyName": "Example Corp",
       "locationName": "Bengaluru",
@@ -36,7 +36,7 @@
       "timePeriod": { "startDate": { "year": 2022, "month": 4 } }
     },
     {
-      "$type": "com.linkedin.voyager.dash.identity.profile.Education",
+      "$type": "com.linkedin.sdui.identity.profile.Education",
       "schoolName": "Example University",
       "degreeName": "B.Tech",
       "fieldOfStudy": "Computer Science",
@@ -45,16 +45,16 @@
         "endDate": { "year": 2018 }
       }
     },
-    { "$type": "com.linkedin.voyager.dash.identity.profile.Skill", "name": "TypeScript" },
-    { "$type": "com.linkedin.voyager.dash.identity.profile.Skill", "name": "Distributed Systems" },
+    { "$type": "com.linkedin.sdui.identity.profile.Skill", "name": "TypeScript" },
+    { "$type": "com.linkedin.sdui.identity.profile.Skill", "name": "Distributed Systems" },
     {
-      "$type": "com.linkedin.voyager.dash.identity.profile.Certification",
+      "$type": "com.linkedin.sdui.identity.profile.Certification",
       "name": "Cloud Architect",
       "authority": "Example Cloud",
       "licenseNumber": "CERT-1"
     },
     {
-      "$type": "com.linkedin.voyager.dash.identity.profile.Language",
+      "$type": "com.linkedin.sdui.identity.profile.Language",
       "name": "English",
       "proficiency": "Native or bilingual proficiency"
     }

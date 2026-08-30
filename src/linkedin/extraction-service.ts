@@ -1,8 +1,8 @@
 import type { ExtractionResult } from "../domain/profile.js";
-import type { LinkedInTransport } from "./voyager-client.js";
+import type { LinkedInTransport } from "./rsc-client.js";
 import { TtlCache } from "../cache/ttl-cache.js";
 import { canonicalizeProfileUrl } from "../security/profile-url.js";
-import { parseVoyagerProfile, PARSER_VERSION } from "./parser.js";
+import { parseRscProfile, PARSER_VERSION } from "./parser.js";
 import { SingleFlight } from "./single-flight.js";
 
 export class ExtractionService {
@@ -27,7 +27,7 @@ export class ExtractionService {
         if (cached) return { ...cached, meta: { ...cached.meta, cached: true } };
       }
       const payload = await this.transport.fetchProfile(canonical.publicIdentifier);
-      const parsed = parseVoyagerProfile(payload, canonical.publicIdentifier);
+      const parsed = parseRscProfile(payload, canonical.publicIdentifier);
       const result: ExtractionResult = {
         status: "success",
         data: parsed.profile,

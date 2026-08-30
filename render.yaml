@@ -15,5 +15,3 @@ services:
         sync: false
       - key: LINKEDIN_USER_AGENT
         sync: false
-      - key: LINKEDIN_PROFILE_QUERY_ID
-        value: voyagerIdentityDashProfiles.b5c27c04968c409fc0ed3546575b9b7a

@@ -3,10 +3,10 @@ import { TtlCache } from "./cache/ttl-cache.js";
 import { loadConfig } from "./config/env.js";
 import type { ExtractionResult } from "./domain/profile.js";
 import { ExtractionService } from "./linkedin/extraction-service.js";
-import { VoyagerClient } from "./linkedin/voyager-client.js";
+import { LinkedInRscClient } from "./linkedin/rsc-client.js";
 
 const config = loadConfig();
-const transport = new VoyagerClient(config);
+const transport = new LinkedInRscClient(config);
 const cache = new TtlCache<ExtractionResult>(config.CACHE_TTL_SECONDS * 1_000);
 const extractionService = new ExtractionService(transport, cache);
 const app = await buildApp({ config, extractionService, transport });

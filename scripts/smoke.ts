@@ -1,7 +1,7 @@
 import { loadConfig } from "../src/config/env.js";
-import { parseVoyagerProfile } from "../src/linkedin/parser.js";
+import { parseRscProfile } from "../src/linkedin/parser.js";
 import { canonicalizeProfileUrl } from "../src/security/profile-url.js";
-import { VoyagerClient } from "../src/linkedin/voyager-client.js";
+import { LinkedInRscClient } from "../src/linkedin/rsc-client.js";
 
 const input = process.argv[2];
 if (!input) {
@@ -10,10 +10,10 @@ if (!input) {
 }
 
 const canonical = canonicalizeProfileUrl(input);
-const client = new VoyagerClient(loadConfig());
+const client = new LinkedInRscClient(loadConfig());
 await client.checkSession(true);
 const payload = await client.fetchProfile(canonical.publicIdentifier);
-const parsed = parseVoyagerProfile(payload, canonical.publicIdentifier);
+const parsed = parseRscProfile(payload, canonical.publicIdentifier);
 console.log(JSON.stringify({
   status: "success",
   data: parsed.profile,

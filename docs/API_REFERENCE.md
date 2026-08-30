@@ -95,4 +95,4 @@ Process liveness only. It never calls LinkedIn.
 
 ## `GET /ready`
 
-Verifies that session secrets exist and checks the authenticated `/voyager/api/me` contract. Session health is cached to avoid an extra LinkedIn call before every extraction.
+Verifies that session secrets exist and checks the authenticated `/feed/` RSC session contract. Session health is cached to avoid an extra LinkedIn call before every extraction.

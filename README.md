@@ -8,8 +8,8 @@ The service reverse-engineers and directly calls LinkedIn's web endpoints. It do
 
 ```text
 Client -> Fastify API -> strict URL validation -> API key/rate limit -> TTL cache
-       -> single-flight, one-at-a-time upstream gate -> direct Voyager HTTP client
-       -> normalized entity parser -> versioned JSON response
+       -> single-flight, one-at-a-time upstream gate -> direct LinkedIn RSC route client
+       -> SDUI/React payload decoder -> normalized entity parser -> versioned JSON response
 ```
 
 Repeated requests are served from cache. Concurrent misses are serialized globally, while identical requests share one in-flight extraction. Authentication redirects, rate restrictions, and schema drift produce typed errors instead of retry storms or empty success responses.
@@ -64,12 +64,10 @@ See [docs/API_REFERENCE.md](docs/API_REFERENCE.md) for the complete contract and
 | `LINKEDIN_LI_AT` | Extraction | — | Authenticated session cookie. |
 | `LINKEDIN_JSESSION_ID` | Extraction | — | Session/CSRF cookie. |
 | `LINKEDIN_USER_AGENT` | Yes | `Mozilla/5.0` | Stable request identity. |
-| `LINKEDIN_PROFILE_QUERY_ID` | Yes | Captured operation | Versioned profile GraphQL operation. |
-| `LINKEDIN_PROFILE_VARIABLE_NAME` | Yes | `vanityName` | Captured operation variable name. |
 | `LINKEDIN_TIMEOUT_MS` | No | `15000` | Upstream timeout. |
 | `LINKEDIN_MAX_RETRIES` | No | `1` | Network-error retries only; never retries HTTP restrictions. |
 | `CACHE_TTL_SECONDS` | No | `86400` | Cache lifetime. |
-| `SESSION_HEALTH_TTL_SECONDS` | No | `300` | `/voyager/api/me` health-check cache. |
+| `SESSION_HEALTH_TTL_SECONDS` | No | `300` | Signed-in `/feed/` health-check cache. |
 | `RATE_LIMIT_MAX` | No | `20` | Requests per key/IP/window. |
 
 ## Deployment
@@ -102,8 +100,8 @@ Tests cover URL/SSRF boundaries, normalized response parsing, request authentica
 - LinkedIn does not provide this arbitrary-profile/full-profile capability through its public developer API.
 - Output is limited to what the configured account can view; privacy and relationship settings matter.
 - LinkedIn can expire or restrict the account/session at any time.
-- Private operation IDs and response structures can change. The service reports drift explicitly; see [docs/REVERSE_ENGINEERING.md](docs/REVERSE_ENGINEERING.md).
-- Some accounts currently receive a newer SDUI/RSC web rollout. The captured Voyager endpoint may remain callable, but this must be proven with the configured session's smoke test.
+- Private RSC component and response structures can change. The service reports drift explicitly; see [docs/REVERSE_ENGINEERING.md](docs/REVERSE_ENGINEERING.md).
+- The service fetches the profile plus five detail routes per uncached extraction; cache and global serialization are therefore essential.
 - Cache and concurrency state are process-local in this submission build.
 - Automated access may violate LinkedIn's terms and may cause account restriction. There is no guaranteed safe request volume.
 

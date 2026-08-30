@@ -6,7 +6,7 @@ import { TtlCache } from "../src/cache/ttl-cache.js";
 import { loadConfig } from "../src/config/env.js";
 import type { ExtractionResult } from "../src/domain/profile.js";
 import { ExtractionService } from "../src/linkedin/extraction-service.js";
-import type { LinkedInTransport } from "../src/linkedin/voyager-client.js";
+import type { LinkedInTransport } from "../src/linkedin/rsc-client.js";
 
 const fixturePath = fileURLToPath(new URL("./fixtures/full-profile.json", import.meta.url));
 const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as unknown;
