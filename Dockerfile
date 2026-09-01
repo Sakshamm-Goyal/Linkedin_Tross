@@ -19,6 +19,7 @@ RUN apt-get update \
     && /opt/curl-cffi/bin/pip install --no-cache-dir curl_cffi \
     && rm -rf /var/lib/apt/lists/*
 RUN groupadd --system app && useradd --system --gid app --home-dir /app app
+RUN mkdir --parents /data && chown app:app /data
 COPY --from=build --chown=app:app /app/node_modules ./node_modules
 COPY --from=build --chown=app:app /app/dist ./dist
 COPY --chown=app:app scripts/curl_cffi_fetch.py ./scripts/curl_cffi_fetch.py
