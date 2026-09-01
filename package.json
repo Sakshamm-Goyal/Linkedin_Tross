@@ -11,7 +11,7 @@
     "dev": "node --env-file-if-exists=.env --import tsx --watch src/server.ts",
     "clean": "node scripts/clean.mjs",
     "build": "npm run clean && tsc -p tsconfig.build.json",
-    "start": "node dist/server.js",
+    "start": "node --env-file-if-exists=.env dist/server.js",
     "smoke": "node --env-file-if-exists=.env --import tsx scripts/smoke.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",

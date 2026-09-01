@@ -95,4 +95,4 @@ Process liveness only. It never calls LinkedIn.
 
 ## `GET /ready`
 
-Verifies that session secrets exist and checks the authenticated `/feed/` RSC session contract. Session health is cached to avoid an extra LinkedIn call before every extraction.
+Verifies that the backend cookie jar contains an authenticated session and checks it through `/voyager/api/me`. Session health is cached to avoid an extra LinkedIn call before every extraction. When encrypted persistence is configured, refreshed response cookies are reused automatically across requests and restarts.

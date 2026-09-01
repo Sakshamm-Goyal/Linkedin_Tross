@@ -19,6 +19,7 @@ afterEach(async () => {
 async function setup() {
   let profileCalls = 0;
   const transport: LinkedInTransport = {
+    hasSession: () => true,
     checkSession: async () => undefined,
     fetchProfile: async () => {
       profileCalls += 1;

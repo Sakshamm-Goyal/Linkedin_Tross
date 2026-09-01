@@ -4,6 +4,10 @@ services:
     runtime: docker
     plan: starter
     healthCheckPath: /health
+    disk:
+      name: linkedin-session
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
@@ -13,5 +17,21 @@ services:
         sync: false
       - key: LINKEDIN_JSESSION_ID
         sync: false
+      - key: LINKEDIN_COOKIE_HEADER
+        sync: false
+      - key: LINKEDIN_COOKIE_PATCH_HEADER
+        sync: false
+      - key: LINKEDIN_SESSION_FILE
+        value: /var/data/linkedin-session.enc
+      - key: LINKEDIN_SESSION_KEY
+        sync: false
       - key: LINKEDIN_USER_AGENT
+        sync: false
+      - key: LINKEDIN_HTTP_TRANSPORT
+        value: curl_cffi
+      - key: LINKEDIN_TLS_IMPERSONATE
+        value: firefox
+      - key: LINKEDIN_ANCHOR_PAGE_KEY
+        value: d_flagship3_profile_view_base
+      - key: LINKEDIN_PROXY_URL
         sync: false

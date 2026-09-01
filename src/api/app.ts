@@ -4,11 +4,11 @@ import rateLimit from "@fastify/rate-limit";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import type { AppConfig } from "../config/env.js";
-import { hasLinkedInSession } from "../config/env.js";
 import { AppError } from "../domain/errors.js";
 import type { ExtractionService } from "../linkedin/extraction-service.js";
 import type { LinkedInTransport } from "../linkedin/rsc-client.js";
 import { errorSchema, extractionBodySchema, extractionResponseSchema } from "./schemas.js";
+import { testConsoleHtml } from "../ui/test-console.js";
 
 interface ExtractionBody {
   profile_url: string;
@@ -75,21 +75,12 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
     }
   });
 
-  app.get("/", async (_request, reply) => reply.type("text/html; charset=utf-8").send(`<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>LinkedIn Profile API</title><style>body{font:16px/1.55 system-ui;max-width:760px;margin:10vh auto;padding:24px;color:#182230}code{background:#eef2f6;padding:.15rem .4rem;border-radius:4px}a{color:#0a66c2}</style></head>
-<body><h1>LinkedIn Profile API</h1><p>Browserless direct-HTTP profile extraction service.</p><p><a href="/docs">Interactive API documentation</a> · <a href="/health">Health</a></p><p>Send <code>POST /v1/profiles/extract</code> with a LinkedIn <code>/in/</code> URL.</p></body></html>`));
+  app.get("/", async (_request, reply) => reply.type("text/html; charset=utf-8").send(testConsoleHtml));
 
   app.get("/health", async () => ({ status: "ok" }));
   app.get("/ready", async (_request, reply) => {
-    if (!hasLinkedInSession(config)) return reply.code(503).send({ status: "not_ready", reason: "session_not_configured" });
-    try {
-      await transport.checkSession();
-      return { status: "ready" };
-    } catch (error) {
-      const code = error instanceof AppError ? error.code : "UPSTREAM_UNAVAILABLE";
-      return reply.code(503).send({ status: "not_ready", reason: code });
-    }
+    if (!transport.hasSession()) return reply.code(503).send({ status: "not_ready", reason: "session_not_configured" });
+    return { status: "ready", mode: "session_configured" };
   });
 
   app.post<{ Body: ExtractionBody }>("/v1/profiles/extract", {

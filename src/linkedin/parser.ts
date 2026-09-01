@@ -9,7 +9,7 @@ import type {
 } from "../domain/profile.js";
 import { AppError } from "../domain/errors.js";
 
-export const PARSER_VERSION = "2026-08-31.1";
+export const PARSER_VERSION = "2026-09-01.2";
 
 type JsonObject = Record<string, unknown>;
 
@@ -51,6 +51,18 @@ function documentsFromText(text: string): unknown[] {
   const direct = parseJson(trimmed);
   if (direct !== undefined) output.push(direct);
 
+  // LinkedIn component actions return the RSC wire format directly. Each line
+  // has an opaque record id followed by a JSON payload, optionally prefixed by
+  // a React record marker such as `I`.
+  for (const line of text.split("\n")) {
+    const separator = line.indexOf(":");
+    if (separator < 1) continue;
+    const candidate = line.slice(separator + 1).trim().replace(/^[A-Z]+(?=[{[\"])/, "");
+    if (!candidate.startsWith("{") && !candidate.startsWith("[") && !candidate.startsWith("\"")) continue;
+    const parsed = parseJson(candidate);
+    if (parsed !== undefined) output.push(parsed);
+  }
+
   for (const match of text.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)) {
     const content = decodeHtml(match[1] ?? "").trim();
     const parsed = parseJson(content);
@@ -73,6 +85,8 @@ function documentsFromText(text: string): unknown[] {
   }
 
   const metadata: JsonObject = { $type: "linkedin.rsc.profileMetadata" };
+  const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(text)?.[1];
+  if (title) metadata.fullName = decodeHtml(title).replace(/\s*\|\s*LinkedIn\s*$/i, "").trim();
   for (const tag of text.match(/<meta\b[^>]*>/gi) ?? []) {
     const attributes = parseAttributes(tag);
     const key = (attributes.property ?? attributes.name)?.toLowerCase();
@@ -81,6 +95,15 @@ function documentsFromText(text: string): unknown[] {
     if (key === "og:title") metadata.fullName = content.replace(/\s*\|\s*LinkedIn\s*$/i, "").trim();
     if (key === "og:description" || key === "description") metadata.summary = content;
     if (key === "og:image") metadata.profilePictureUrl = content;
+  }
+  if (typeof metadata.fullName === "string") {
+    const marker = `>${metadata.fullName}</p>`;
+    const nameIndex = text.indexOf(marker);
+    if (nameIndex >= 0) {
+      const topCard = text.slice(nameIndex + marker.length, nameIndex + marker.length + 4_000);
+      const headline = /<p\b[^>]*>\s*<span>([^<]+)<\/span>\s*<\/p>/i.exec(topCard)?.[1];
+      if (headline) metadata.headline = decodeHtml(headline).trim();
+    }
   }
   if (Object.keys(metadata).length > 1) output.push(metadata);
   return output;
@@ -109,6 +132,67 @@ function collectObjects(value: unknown, output: JsonObject[] = [], seen = new Se
   output.push(value);
   for (const nested of Object.values(value)) collectObjects(nested, output, seen);
   return output;
+}
+
+function collectStrings(value: unknown, output: string[] = [], seen = new Set<object>()): string[] {
+  if (typeof value === "string") {
+    output.push(value);
+    return output;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectStrings(item, output, seen);
+    return output;
+  }
+  if (!isObject(value) || seen.has(value)) return output;
+  seen.add(value);
+  for (const nested of Object.values(value)) collectStrings(nested, output, seen);
+  return output;
+}
+
+function stateString(strings: string[], stateId: string): string | null {
+  for (let index = 0; index < strings.length - 4; index += 1) {
+    if (strings[index] !== stateId) continue;
+    const typeIndex = strings.indexOf("stringValue", index + 1);
+    if (typeIndex < 0 || typeIndex > index + 5) continue;
+    const value = strings[typeIndex + 1]?.trim();
+    if (value) return value;
+  }
+  return null;
+}
+
+function stateImage(strings: string[]): string | null {
+  const stateIndex = strings.indexOf("profile_photo_loading_state");
+  if (stateIndex < 0) return null;
+  const renderPayload = strings.indexOf("renderPayload", stateIndex);
+  const root = renderPayload >= 0 ? strings[renderPayload + 1] : null;
+  if (!root?.startsWith("http")) return null;
+  const candidates = strings.slice(renderPayload + 2, renderPayload + 16)
+    .filter((value) => value.startsWith("scale_"));
+  return candidates.length > 0 ? `${root}${candidates.at(-1)}` : root;
+}
+
+function fallbackProfileFromRscState(decoded: unknown[], publicIdentifier: string): LinkedInProfile | null {
+  const strings = decoded.flatMap((document) => collectStrings(document));
+  const full = stateString(strings, "profile_name_loading_state");
+  if (!full) return null;
+  const nameParts = full.split(/\s+/);
+  const first = nameParts[0] ?? null;
+  const last = nameParts.length > 1 ? nameParts.at(-1) ?? null : null;
+  return {
+    profile_url: `https://www.linkedin.com/in/${publicIdentifier}/`,
+    public_identifier: publicIdentifier,
+    linkedin_id: null,
+    name: { first, last, full },
+    headline: stateString(strings, "profile_headline_loading_state"),
+    location: null,
+    about: null,
+    profile_images: { avatar_url: stateImage(strings), background_url: null },
+    experience: [],
+    education: [],
+    skills: [],
+    certifications: [],
+    languages: [],
+  };
 }
 
 function directString(value: unknown): string | null {
@@ -221,6 +305,121 @@ function parseExperience(objects: JsonObject[]): Experience[] {
   })).filter((item) => item.title || item.company), (item) => JSON.stringify(item));
 }
 
+function parseMonthYear(value: string): DateParts | null {
+  const match = /^(?:[A-Z][a-z]{2}\s+)?(\d{4})$/.exec(value.trim());
+  if (!match?.[1]) return null;
+  const monthName = /^([A-Z][a-z]{2})\s+/.exec(value)?.[1];
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return { year: Number(match[1]), month: monthName ? months.indexOf(monthName) + 1 : null };
+}
+
+function leafTexts(text: string): string[] {
+  const values: string[] = [];
+  for (const match of text.matchAll(/"children":\[(?:null,)?\s*"((?:\\.|[^"\\])*)"\]/g)) {
+    try {
+      const value = JSON.parse(`"${match[1] ?? ""}"`) as string;
+      if (value.trim()) values.push(value.trim());
+    } catch {
+      // Ignore an isolated malformed React Flight string.
+    }
+  }
+  return values;
+}
+
+function documentLeafTexts(payload: unknown, section: string): string[] {
+  if (!isObject(payload) || !Array.isArray(payload.documents)) return [];
+  const document = payload.documents.find(
+    (item) => isObject(item) && item.section === section && typeof item.body === "string",
+  );
+  return isObject(document) && typeof document.body === "string" ? leafTexts(document.body) : [];
+}
+
+function parseSduiExperience(payload: unknown): Experience[] {
+  const values = documentLeafTexts(payload, "profileCardsExperienceOnly");
+  const employment = /^(.*?) · (Full-time|Part-time|Internship|Contract|Freelance|Temporary|Apprenticeship|Self-employed)$/i;
+  const date = /^([A-Z][a-z]{2}\s+\d{4}) - (Present|[A-Z][a-z]{2}\s+\d{4})(?: · .*)?$/;
+  const output: Experience[] = [];
+  for (let index = 1; index < values.length; index += 1) {
+    const company = employment.exec(values[index] ?? "");
+    if (!company) continue;
+    const dateValue = values.slice(index + 1, index + 4).find((value) => date.test(value));
+    const dateMatch = dateValue ? date.exec(dateValue) : null;
+    const location = values.slice(index + 1, index + 5).find(
+      (value) => value.includes(" · ") && !employment.test(value) && !date.test(value),
+    );
+    output.push({
+      title: values[index - 1] ?? null,
+      company: company[1]?.trim() || null,
+      location: location?.replace(/\s*·\s*(?:On-site|Remote|Hybrid)$/i, "").trim() || null,
+      description: null,
+      employment_type: company[2] ?? null,
+      date_range: dateMatch
+        ? {
+            start: parseMonthYear(dateMatch[1] ?? ""),
+            end: dateMatch[2] === "Present" ? null : parseMonthYear(dateMatch[2] ?? ""),
+            current: dateMatch[2] === "Present",
+          }
+        : null,
+    });
+  }
+  return uniqueBy(output, (item) => JSON.stringify(item));
+}
+
+function parseSduiEducation(payload: unknown): Education[] {
+  const values = documentLeafTexts(payload, "profileCardsBelowActivityPart1");
+  const degreePattern = /^(Bachelor|Master|B\.?Tech|M\.?Tech|BSc|MSc|MBA|PhD|Diploma|12th|High School)\b/i;
+  const schoolPattern = /\b(University|Institute|College|School|Academy|Technology)\b/i;
+  const datePattern = /^((?:[A-Z][a-z]{2}\s+)?\d{4})\s+[–-]\s+((?:[A-Z][a-z]{2}\s+)?\d{4}|Present)$/;
+  const output: Education[] = [];
+
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index] ?? "";
+    if (!degreePattern.test(value)) continue;
+    const school = values.slice(0, index).reverse().find((candidate) => schoolPattern.test(candidate));
+    if (!school) continue;
+    const dateValue = values.slice(index + 1, index + 4).find((candidate) => datePattern.test(candidate));
+    const dateMatch = dateValue ? datePattern.exec(dateValue) : null;
+    const [degree, ...fieldParts] = value.split(",").map((part) => part.trim());
+    const grade = values.slice(index + 1, index + 4).find((candidate) => /^Grade:/i.test(candidate));
+    output.push({
+      school: school.replace(/\s*·\s*(?:On-site|Remote|Hybrid)$/i, "").trim(),
+      degree: degree || null,
+      field_of_study: fieldParts.join(", ") || null,
+      description: grade ?? null,
+      date_range: dateMatch
+        ? {
+            start: parseMonthYear(dateMatch[1] ?? ""),
+            end: dateMatch[2] === "Present" ? null : parseMonthYear(dateMatch[2] ?? ""),
+            current: dateMatch[2] === "Present",
+          }
+        : null,
+    });
+  }
+  return uniqueBy(output, (item) => JSON.stringify(item));
+}
+
+function parseSduiCertifications(payload: unknown): Certification[] {
+  const values = documentLeafTexts(payload, "profileCardsBelowActivityPart1");
+  const issuedPattern = /^Issued\s+([A-Z][a-z]{2}\s+\d{4})/;
+  const output: Certification[] = [];
+  for (let index = 2; index < values.length; index += 1) {
+    const issued = issuedPattern.exec(values[index] ?? "");
+    if (!issued) continue;
+    output.push({
+      name: values[index - 2] ?? null,
+      authority: values[index - 1] ?? null,
+      license_number: null,
+      url: null,
+      date_range: {
+        start: parseMonthYear(issued[1] ?? ""),
+        end: null,
+        current: false,
+      },
+    });
+  }
+  return uniqueBy(output, (item) => JSON.stringify(item));
+}
+
 function parseEducation(objects: JsonObject[]): Education[] {
   return uniqueBy(objects.filter((object) => typeName(object).includes("education")).map((object) => ({
     school: field(object, "schoolName", "organizationName", "school"),
@@ -264,9 +463,49 @@ export interface ParsedProfile {
 }
 
 export function parseRscProfile(payload: unknown, publicIdentifier: string): ParsedProfile {
-  const objects = decodeRscEnvelope(payload).flatMap((document) => collectObjects(document));
+  const decoded = decodeRscEnvelope(payload);
+  const objects = decoded.flatMap((document) => collectObjects(document));
   const profileEntity = findProfile(objects, publicIdentifier);
   if (!profileEntity) {
+    const stateProfile = fallbackProfileFromRscState(decoded, publicIdentifier);
+    if (stateProfile) {
+      const unavailableSections = ["about", "experience", "education", "skills", "certifications", "languages", "profile_images"]
+        .filter((section) => section !== "profile_images" || !stateProfile.profile_images.avatar_url);
+      return { profile: stateProfile, unavailableSections };
+    }
+    const experience = parseSduiExperience(payload);
+    if (experience.length > 0) {
+      const education = parseSduiEducation(payload);
+      const certifications = parseSduiCertifications(payload);
+      return {
+        profile: {
+          profile_url: `https://www.linkedin.com/in/${publicIdentifier}/`,
+          public_identifier: publicIdentifier,
+          linkedin_id: null,
+          name: { first: null, last: null, full: null },
+          headline: null,
+          location: null,
+          about: null,
+          profile_images: { avatar_url: null, background_url: null },
+          experience,
+          education,
+          skills: [],
+          certifications,
+          languages: [],
+        },
+        unavailableSections: [
+          "name",
+          "headline",
+          "location",
+          "about",
+          ...(education.length === 0 ? ["education"] : []),
+          "skills",
+          ...(certifications.length === 0 ? ["certifications"] : []),
+          "languages",
+          "profile_images",
+        ],
+      };
+    }
     throw new AppError(
       "UPSTREAM_SCHEMA_CHANGED",
       "The LinkedIn response did not contain a recognizable profile entity.",
@@ -280,9 +519,12 @@ export function parseRscProfile(payload: unknown, publicIdentifier: string): Par
   const composedName = [first, last].filter(Boolean).join(" ") || null;
   const full = field(profileEntity, "fullName", "name") ?? composedName;
   const experience = parseExperience(objects);
+  if (experience.length === 0) experience.push(...parseSduiExperience(payload));
   const education = parseEducation(objects);
+  if (education.length === 0) education.push(...parseSduiEducation(payload));
   const skills = parseSkills(objects);
   const certifications = parseCertifications(objects);
+  if (certifications.length === 0) certifications.push(...parseSduiCertifications(payload));
   const languages = parseLanguages(objects);
   const avatar = imageUrl(profileEntity.profilePicture ?? profileEntity.displayPhoto ?? profileEntity.picture);
   const background = imageUrl(profileEntity.backgroundPicture ?? profileEntity.backgroundImage);

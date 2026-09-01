@@ -2,6 +2,7 @@ import { loadConfig } from "../src/config/env.js";
 import { parseRscProfile } from "../src/linkedin/parser.js";
 import { canonicalizeProfileUrl } from "../src/security/profile-url.js";
 import { LinkedInRscClient } from "../src/linkedin/rsc-client.js";
+import { LinkedInSessionStore } from "../src/linkedin/session-store.js";
 
 const input = process.argv[2];
 if (!input) {
@@ -10,7 +11,8 @@ if (!input) {
 }
 
 const canonical = canonicalizeProfileUrl(input);
-const client = new LinkedInRscClient(loadConfig());
+const config = loadConfig();
+const client = new LinkedInRscClient(config, await LinkedInSessionStore.create(config));
 await client.checkSession(true);
 const payload = await client.fetchProfile(canonical.publicIdentifier);
 const parsed = parseRscProfile(payload, canonical.publicIdentifier);
