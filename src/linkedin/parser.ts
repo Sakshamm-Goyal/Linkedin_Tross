@@ -9,7 +9,7 @@ import type {
 } from "../domain/profile.js";
 import { AppError } from "../domain/errors.js";
 
-export const PARSER_VERSION = "2026-09-01.2";
+export const PARSER_VERSION = "2026-09-01.3";
 
 type JsonObject = Record<string, unknown>;
 
@@ -173,6 +173,14 @@ function stateImage(strings: string[]): string | null {
 
 function fallbackProfileFromRscState(decoded: unknown[], publicIdentifier: string): LinkedInProfile | null {
   const strings = decoded.flatMap((document) => collectStrings(document));
+  const normalizedIdentifier = publicIdentifier.toLowerCase();
+  const belongsToTarget = strings.some((value) => {
+    const normalized = value.toLowerCase();
+    return normalized === normalizedIdentifier
+      || normalized.includes(`/in/${normalizedIdentifier}`)
+      || normalized.includes(`${normalizedIdentifier}profile`);
+  });
+  if (!belongsToTarget) return null;
   const full = stateString(strings, "profile_name_loading_state");
   if (!full) return null;
   const nameParts = full.split(/\s+/);
@@ -278,16 +286,18 @@ function uniqueBy<T>(items: T[], key: (item: T) => string): T[] {
 }
 
 function findProfile(objects: JsonObject[], publicIdentifier: string): JsonObject | undefined {
-  return objects.find((object) => {
+  const exactProfile = objects.find((object) => {
     const type = typeName(object);
     const identifier = field(object, "publicIdentifier", "vanityName");
     return (type.endsWith("profile") || type.includes("profilemetadata") || type.endsWith("person"))
       && identifier?.toLowerCase() === publicIdentifier.toLowerCase();
-  }) ?? objects.find((object) => {
-    const type = typeName(object);
-    return (type.endsWith("profile") || type.includes("profilemetadata") || type.endsWith("person"))
-      && Boolean(field(object, "firstName", "givenName", "fullName", "name") || field(object, "headline", "jobTitle"));
-  }) ?? objects.find((object) => Boolean(field(object, "firstName", "givenName") && field(object, "headline", "jobTitle")));
+  });
+  if (exactProfile) return exactProfile;
+
+  // This synthetic object is created only from the requested profile document's
+  // own <title>/meta tags. Never fall back to arbitrary Person/Profile objects:
+  // RSC payloads also contain recommendations and navigation identities.
+  return objects.find((object) => typeName(object).includes("linkedin.rsc.profilemetadata"));
 }
 
 function parseExperience(objects: JsonObject[]): Experience[] {

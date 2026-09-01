@@ -37,6 +37,7 @@ describe("parseRscProfile", () => {
 
   it("decodes profile header state from a direct component RSC stream", () => {
     const stream = [
+      '0:["jane-doe","jane-doeProfileComponentState"]',
       '1:["$","div",null,["id","profile_name_loading_state","LoadingNamespace","stringValue","Jane Doe"]]',
       '2:["id","profile_headline_loading_state","LoadingNamespace","stringValue","Engineer"]',
       '3:["id","profile_photo_loading_state","LoadingNamespace","imageAssetValue","ClientImageAsset","renderPayload","https://images.example/","scale_400_400/avatar"]',
@@ -45,6 +46,30 @@ describe("parseRscProfile", () => {
     expect(result.profile.name.full).toBe("Jane Doe");
     expect(result.profile.headline).toBe("Engineer");
     expect(result.profile.profile_images.avatar_url).toBe("https://images.example/scale_400_400/avatar");
+  });
+
+  it("never assigns an unrelated RSC navigation profile to the requested URL", () => {
+    const unrelated = [
+      '0:["$","div",null,["id","profile_name_loading_state","LoadingNamespace","stringValue","Unrelated Person"]]',
+      '1:["id","profile_headline_loading_state","LoadingNamespace","stringValue","Unrelated Headline"]',
+    ].join("\n");
+    const experience = [
+      '1:["$","p",null,{"children":["Software Engineer"]}]',
+      '2:["$","p",null,{"children":["Example Co · Full-time"]}]',
+      '3:["$","p",null,{"children":["Jan 2024 - Present · 2 yrs"]}]',
+    ].join("\n");
+    const result = parseRscProfile({
+      transport: "linkedin-rsc",
+      documents: [
+        { section: "profile", body: unrelated },
+        { section: "profileCardsExperienceOnly", body: experience },
+      ],
+    }, "target-profile");
+
+    expect(result.profile.name.full).toBeNull();
+    expect(result.profile.headline).toBeNull();
+    expect(result.profile.experience[0]?.company).toBe("Example Co");
+    expect(result.unavailableSections).toContain("name");
   });
 
   it("decodes server-rendered title, headline, and generic SDUI experience cards", () => {
