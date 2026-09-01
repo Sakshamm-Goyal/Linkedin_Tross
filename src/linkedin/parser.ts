@@ -9,7 +9,7 @@ import type {
 } from "../domain/profile.js";
 import { AppError } from "../domain/errors.js";
 
-export const PARSER_VERSION = "2026-09-01.3";
+export const PARSER_VERSION = "2026-09-01.4";
 
 type JsonObject = Record<string, unknown>;
 
@@ -43,6 +43,17 @@ function parseAttributes(tag: string): Record<string, string> {
     if (name && value !== undefined) attributes[name] = decodeHtml(value);
   }
   return attributes;
+}
+
+function profileIdentifierFromUrl(value: string): string | null {
+  try {
+    const url = new URL(value, "https://www.linkedin.com");
+    if (!/(^|\.)linkedin\.com$/i.test(url.hostname)) return null;
+    const match = /^\/in\/([^/?#]+)\/?$/i.exec(url.pathname);
+    return match?.[1] ? decodeURIComponent(match[1]) : null;
+  } catch {
+    return null;
+  }
 }
 
 function documentsFromText(text: string): unknown[] {
@@ -95,6 +106,12 @@ function documentsFromText(text: string): unknown[] {
     if (key === "og:title") metadata.fullName = content.replace(/\s*\|\s*LinkedIn\s*$/i, "").trim();
     if (key === "og:description" || key === "description") metadata.summary = content;
     if (key === "og:image") metadata.profilePictureUrl = content;
+    if (key === "og:url") metadata.publicIdentifier = profileIdentifierFromUrl(content);
+  }
+  for (const tag of text.match(/<link\b[^>]*>/gi) ?? []) {
+    const attributes = parseAttributes(tag);
+    if (attributes.rel?.toLowerCase() !== "canonical" || !attributes.href) continue;
+    metadata.publicIdentifier = profileIdentifierFromUrl(attributes.href);
   }
   if (typeof metadata.fullName === "string") {
     const marker = `>${metadata.fullName}</p>`;
@@ -132,75 +149,6 @@ function collectObjects(value: unknown, output: JsonObject[] = [], seen = new Se
   output.push(value);
   for (const nested of Object.values(value)) collectObjects(nested, output, seen);
   return output;
-}
-
-function collectStrings(value: unknown, output: string[] = [], seen = new Set<object>()): string[] {
-  if (typeof value === "string") {
-    output.push(value);
-    return output;
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) collectStrings(item, output, seen);
-    return output;
-  }
-  if (!isObject(value) || seen.has(value)) return output;
-  seen.add(value);
-  for (const nested of Object.values(value)) collectStrings(nested, output, seen);
-  return output;
-}
-
-function stateString(strings: string[], stateId: string): string | null {
-  for (let index = 0; index < strings.length - 4; index += 1) {
-    if (strings[index] !== stateId) continue;
-    const typeIndex = strings.indexOf("stringValue", index + 1);
-    if (typeIndex < 0 || typeIndex > index + 5) continue;
-    const value = strings[typeIndex + 1]?.trim();
-    if (value) return value;
-  }
-  return null;
-}
-
-function stateImage(strings: string[]): string | null {
-  const stateIndex = strings.indexOf("profile_photo_loading_state");
-  if (stateIndex < 0) return null;
-  const renderPayload = strings.indexOf("renderPayload", stateIndex);
-  const root = renderPayload >= 0 ? strings[renderPayload + 1] : null;
-  if (!root?.startsWith("http")) return null;
-  const candidates = strings.slice(renderPayload + 2, renderPayload + 16)
-    .filter((value) => value.startsWith("scale_"));
-  return candidates.length > 0 ? `${root}${candidates.at(-1)}` : root;
-}
-
-function fallbackProfileFromRscState(decoded: unknown[], publicIdentifier: string): LinkedInProfile | null {
-  const strings = decoded.flatMap((document) => collectStrings(document));
-  const normalizedIdentifier = publicIdentifier.toLowerCase();
-  const belongsToTarget = strings.some((value) => {
-    const normalized = value.toLowerCase();
-    return normalized === normalizedIdentifier
-      || normalized.includes(`/in/${normalizedIdentifier}`)
-      || normalized.includes(`${normalizedIdentifier}profile`);
-  });
-  if (!belongsToTarget) return null;
-  const full = stateString(strings, "profile_name_loading_state");
-  if (!full) return null;
-  const nameParts = full.split(/\s+/);
-  const first = nameParts[0] ?? null;
-  const last = nameParts.length > 1 ? nameParts.at(-1) ?? null : null;
-  return {
-    profile_url: `https://www.linkedin.com/in/${publicIdentifier}/`,
-    public_identifier: publicIdentifier,
-    linkedin_id: null,
-    name: { first, last, full },
-    headline: stateString(strings, "profile_headline_loading_state"),
-    location: null,
-    about: null,
-    profile_images: { avatar_url: stateImage(strings), background_url: null },
-    experience: [],
-    education: [],
-    skills: [],
-    certifications: [],
-    languages: [],
-  };
 }
 
 function directString(value: unknown): string | null {
@@ -286,18 +234,12 @@ function uniqueBy<T>(items: T[], key: (item: T) => string): T[] {
 }
 
 function findProfile(objects: JsonObject[], publicIdentifier: string): JsonObject | undefined {
-  const exactProfile = objects.find((object) => {
+  return objects.find((object) => {
     const type = typeName(object);
     const identifier = field(object, "publicIdentifier", "vanityName");
     return (type.endsWith("profile") || type.includes("profilemetadata") || type.endsWith("person"))
       && identifier?.toLowerCase() === publicIdentifier.toLowerCase();
   });
-  if (exactProfile) return exactProfile;
-
-  // This synthetic object is created only from the requested profile document's
-  // own <title>/meta tags. Never fall back to arbitrary Person/Profile objects:
-  // RSC payloads also contain recommendations and navigation identities.
-  return objects.find((object) => typeName(object).includes("linkedin.rsc.profilemetadata"));
 }
 
 function parseExperience(objects: JsonObject[]): Experience[] {
@@ -477,12 +419,6 @@ export function parseRscProfile(payload: unknown, publicIdentifier: string): Par
   const objects = decoded.flatMap((document) => collectObjects(document));
   const profileEntity = findProfile(objects, publicIdentifier);
   if (!profileEntity) {
-    const stateProfile = fallbackProfileFromRscState(decoded, publicIdentifier);
-    if (stateProfile) {
-      const unavailableSections = ["about", "experience", "education", "skills", "certifications", "languages", "profile_images"]
-        .filter((section) => section !== "profile_images" || !stateProfile.profile_images.avatar_url);
-      return { profile: stateProfile, unavailableSections };
-    }
     const experience = parseSduiExperience(payload);
     if (experience.length > 0) {
       const education = parseSduiEducation(payload);

@@ -35,24 +35,12 @@ describe("parseRscProfile", () => {
     expect(result.profile.headline).toBe("Engineer");
   });
 
-  it("decodes profile header state from a direct component RSC stream", () => {
-    const stream = [
-      '0:["jane-doe","jane-doeProfileComponentState"]',
-      '1:["$","div",null,["id","profile_name_loading_state","LoadingNamespace","stringValue","Jane Doe"]]',
-      '2:["id","profile_headline_loading_state","LoadingNamespace","stringValue","Engineer"]',
-      '3:["id","profile_photo_loading_state","LoadingNamespace","imageAssetValue","ClientImageAsset","renderPayload","https://images.example/","scale_400_400/avatar"]',
-    ].join("\n");
-    const result = parseRscProfile({ transport: "linkedin-rsc", documents: [{ section: "profile", body: stream }] }, "jane-doe");
-    expect(result.profile.name.full).toBe("Jane Doe");
-    expect(result.profile.headline).toBe("Engineer");
-    expect(result.profile.profile_images.avatar_url).toBe("https://images.example/scale_400_400/avatar");
-  });
-
   it("never assigns an unrelated RSC navigation profile to the requested URL", () => {
-    const unrelated = [
-      '0:["$","div",null,["id","profile_name_loading_state","LoadingNamespace","stringValue","Unrelated Person"]]',
-      '1:["id","profile_headline_loading_state","LoadingNamespace","stringValue","Unrelated Headline"]',
-    ].join("\n");
+    const unrelated = `<html><head>
+      <title>Unrelated Person | LinkedIn</title>
+      <link rel="canonical" href="https://www.linkedin.com/in/unrelated-person/">
+      <meta property="og:description" content="Unrelated Headline">
+    </head></html>`;
     const experience = [
       '1:["$","p",null,{"children":["Software Engineer"]}]',
       '2:["$","p",null,{"children":["Example Co · Full-time"]}]',
@@ -73,7 +61,9 @@ describe("parseRscProfile", () => {
   });
 
   it("decodes server-rendered title, headline, and generic SDUI experience cards", () => {
-    const html = `<html><head><title>Rohit Sharma | LinkedIn</title></head><body>
+    const html = `<html><head><title>Rohit Sharma | LinkedIn</title>
+      <link rel="canonical" href="https://www.linkedin.com/in/rohit-sharma/">
+      </head><body>
       <p>Rohit Sharma</p><div><p><span>SDE 1 @Amazon</span></p></div>
     </body></html>`;
     const experience = [
